@@ -181,6 +181,17 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Initialize COM1 port (115200, 8 bits (7-bit data + 1 stop bit), no parity */
+  BspCOMInit.BaudRate   = 115200;
+  BspCOMInit.WordLength = COM_WORDLENGTH_8B;
+  BspCOMInit.StopBits   = COM_STOPBITS_1;
+  BspCOMInit.Parity     = COM_PARITY_NONE;
+  BspCOMInit.HwFlowCtl  = COM_HWCONTROL_NONE;
+  if (BSP_COM_Init(COM1, &BspCOMInit) != BSP_ERROR_NONE)
+  {
+    Error_Handler();
+  }
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -343,7 +354,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CRCPolynomial = 0x7;
   hspi1.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
   hspi1.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
-  hspi1.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
+  hspi1.Init.FifoThreshold = SPI_FIFO_THRESHOLD_08DATA;
   hspi1.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
   hspi1.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
   hspi1.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
