@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "driver_w25qxx_basic.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -100,8 +100,6 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
-  /* USER CODE END 2 */
-
   /* Initialize COM1 port (115200, 8 bits (7-bit data + 1 stop bit), no parity */
   BspCOMInit.BaudRate   = 115200;
   BspCOMInit.WordLength = COM_WORDLENGTH_8B;
@@ -113,6 +111,76 @@ int main(void)
     Error_Handler();
   }
 
+  /* Enable DWT cycle counter for microsecond delay */
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CYCCNT = 0;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+  printf("W25Q128JVSQ basic example\r\n");
+
+  /* Init W25Q128 via SPI, no dual/quad */
+  if (w25qxx_basic_init(W25Q128, W25QXX_INTERFACE_SPI, W25QXX_BOOL_FALSE) != 0)
+  {
+    printf("w25qxx basic init failed.\r\n");
+    Error_Handler();
+  }
+  printf("w25qxx basic init ok.\r\n");
+
+  /* Read manufacturer and device ID */
+  uint8_t manufacturer = 0;
+  uint8_t device_id = 0;
+  if (w25qxx_basic_get_id(&manufacturer, &device_id) != 0)
+  {
+    printf("w25qxx get id failed.\r\n");
+  }
+  else
+  {
+    printf("manufacturer: 0x%02X, device_id: 0x%02X\r\n", manufacturer, device_id);
+  }
+
+  /* Write and read back test at address 0x00000000 */
+  uint8_t write_buf[16] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                           0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+  uint8_t read_buf[16] = {0};
+  uint32_t test_addr = 0x00000000;
+
+  printf("writing 16 bytes to addr 0x%08lX ...\r\n", test_addr);
+  if (w25qxx_basic_write(test_addr, write_buf, 16) != 0)
+  {
+    printf("w25qxx write failed.\r\n");
+  }
+  else
+  {
+    printf("write ok.\r\n");
+  }
+
+  printf("reading 16 bytes from addr 0x%08lX ...\r\n", test_addr);
+  if (w25qxx_basic_read(test_addr, read_buf, 16) != 0)
+  {
+    printf("w25qxx read failed.\r\n");
+  }
+  else
+  {
+    printf("read data: ");
+    for (int i = 0; i < 16; i++)
+    {
+      printf("0x%02X ", read_buf[i]);
+    }
+    printf("\r\n");
+
+    /* Verify */
+    if (memcmp(write_buf, read_buf, 16) == 0)
+    {
+      printf("write/read verify ok!\r\n");
+    }
+    else
+    {
+      printf("write/read verify FAILED!\r\n");
+    }
+  }
+
+  /* USER CODE END 2 */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -121,6 +189,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    HAL_Delay(1000);
   }
   /* USER CODE END 3 */
 }
@@ -263,7 +332,7 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;

@@ -1,6 +1,6 @@
 /**
  * Copyright (c) 2015 - present LibDriver All rights reserved
- * 
+ *
  * The MIT License (MIT)
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -19,10 +19,10 @@
  * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE. 
+ * SOFTWARE.
  *
- * @file      driver_w25qxx_interface_template.c
- * @brief     driver w25qxx interface template source file
+ * @file      driver_w25qxx_interface.c
+ * @brief     driver w25qxx interface source file for STM32H533RE + SPI1 interrupt
  * @version   1.0.0
  * @author    Shifeng Li
  * @date      2021-07-15
@@ -35,13 +35,86 @@
  */
 
 #include "driver_w25qxx_interface.h"
+#include "main.h"
+#include <stdarg.h>
+
+extern SPI_HandleTypeDef hspi1;
+
+#define W25QXX_CS_LOW()   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
+#define W25QXX_CS_HIGH()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
+
+#define SPI_TIMEOUT_MS  1000
+
+static volatile uint8_t gs_spi_tx_done = 0;
+static volatile uint8_t gs_spi_rx_done = 0;
+static volatile uint8_t gs_spi_txrx_done = 0;
+
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI1)
+    {
+        gs_spi_tx_done = 1;
+    }
+}
+
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI1)
+    {
+        gs_spi_rx_done = 1;
+    }
+}
+
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI1)
+    {
+        gs_spi_txrx_done = 1;
+    }
+}
+
+static uint8_t spi_transmit_it(uint8_t *data, uint16_t len)
+{
+    gs_spi_tx_done = 0;
+    if (HAL_SPI_Transmit_IT(&hspi1, data, len) != HAL_OK)
+    {
+        return 1;
+    }
+    uint32_t start = HAL_GetTick();
+    while (!gs_spi_tx_done)
+    {
+        if ((HAL_GetTick() - start) > SPI_TIMEOUT_MS)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static uint8_t spi_receive_it(uint8_t *data, uint16_t len)
+{
+    gs_spi_rx_done = 0;
+    if (HAL_SPI_Receive_IT(&hspi1, data, len) != HAL_OK)
+    {
+        return 1;
+    }
+    uint32_t start = HAL_GetTick();
+    while (!gs_spi_rx_done)
+    {
+        if ((HAL_GetTick() - start) > SPI_TIMEOUT_MS)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 /**
  * @brief  interface spi qspi bus init
  * @return status code
  *         - 0 success
  *         - 1 spi qspi init failed
- * @note   none
+ * @note   SPI1 is already initialized by MX_SPI1_Init() in main.c
  */
 uint8_t w25qxx_interface_spi_qspi_init(void)
 {
@@ -87,6 +160,97 @@ uint8_t w25qxx_interface_spi_qspi_write_read(uint8_t instruction, uint8_t instru
                                              uint8_t dummy, uint8_t *in_buf, uint32_t in_len,
                                              uint8_t *out_buf, uint32_t out_len, uint8_t data_line)
 {
+    uint8_t buf[32];
+    uint16_t pos = 0;
+
+    W25QXX_CS_LOW();
+
+    /* send instruction */
+    if (instruction_line != 0)
+    {
+        buf[pos++] = instruction;
+    }
+
+    /* send address */
+    if (address_line != 0)
+    {
+        if (address_len == 4)
+        {
+            buf[pos++] = (uint8_t)((address >> 24) & 0xFF);
+        }
+        if (address_len >= 3)
+        {
+            buf[pos++] = (uint8_t)((address >> 16) & 0xFF);
+        }
+        if (address_len >= 2)
+        {
+            buf[pos++] = (uint8_t)((address >> 8) & 0xFF);
+        }
+        if (address_len >= 1)
+        {
+            buf[pos++] = (uint8_t)(address & 0xFF);
+        }
+    }
+
+    /* send alternate */
+    if (alternate_line != 0)
+    {
+        if (alternate_len == 4)
+        {
+            buf[pos++] = (uint8_t)((alternate >> 24) & 0xFF);
+        }
+        if (alternate_len >= 3)
+        {
+            buf[pos++] = (uint8_t)((alternate >> 16) & 0xFF);
+        }
+        if (alternate_len >= 2)
+        {
+            buf[pos++] = (uint8_t)((alternate >> 8) & 0xFF);
+        }
+        if (alternate_len >= 1)
+        {
+            buf[pos++] = (uint8_t)(alternate & 0xFF);
+        }
+    }
+
+    /* send dummy */
+    for (uint8_t i = 0; i < dummy; i++)
+    {
+        buf[pos++] = 0xFF;
+    }
+
+    /* transmit command header */
+    if (pos > 0)
+    {
+        if (spi_transmit_it(buf, pos) != 0)
+        {
+            W25QXX_CS_HIGH();
+            return 1;
+        }
+    }
+
+    /* write data */
+    if (in_len > 0)
+    {
+        if (spi_transmit_it(in_buf, (uint16_t)in_len) != 0)
+        {
+            W25QXX_CS_HIGH();
+            return 1;
+        }
+    }
+
+    /* read data */
+    if (out_len > 0)
+    {
+        if (spi_receive_it(out_buf, (uint16_t)out_len) != 0)
+        {
+            W25QXX_CS_HIGH();
+            return 1;
+        }
+    }
+
+    W25QXX_CS_HIGH();
+
     return 0;
 }
 
@@ -97,7 +261,7 @@ uint8_t w25qxx_interface_spi_qspi_write_read(uint8_t instruction, uint8_t instru
  */
 void w25qxx_interface_delay_ms(uint32_t ms)
 {
-
+    HAL_Delay(ms);
 }
 
 /**
@@ -107,7 +271,11 @@ void w25qxx_interface_delay_ms(uint32_t ms)
  */
 void w25qxx_interface_delay_us(uint32_t us)
 {
-
+    uint32_t ticks = us * (SystemCoreClock / 1000000);
+    uint32_t start = DWT->CYCCNT;
+    while ((DWT->CYCCNT - start) < ticks)
+    {
+    }
 }
 
 /**
@@ -117,5 +285,12 @@ void w25qxx_interface_delay_us(uint32_t us)
  */
 void w25qxx_interface_debug_print(const char *const fmt, ...)
 {
-    
+    char buf[256];
+    va_list args;
+
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    printf("%s", buf);
 }
