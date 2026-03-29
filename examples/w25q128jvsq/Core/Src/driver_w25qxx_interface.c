@@ -22,7 +22,7 @@
  * SOFTWARE.
  *
  * @file      driver_w25qxx_interface.c
- * @brief     driver w25qxx interface source file for STM32H533RE + SPI1 interrupt
+ * @brief     driver w25qxx interface source file for STM32H533RE + SPI1 DMA
  * @version   1.0.0
  * @author    Shifeng Li
  * @date      2021-07-15
@@ -112,7 +112,7 @@ uint8_t w25qxx_interface_spi_qspi_deinit(void)
  * @return     status code
  *             - 0 success
  *             - 1 write read failed
- * @note       Uses a single HAL_SPI_TransmitReceive_IT for the entire transaction
+ * @note       Uses a single HAL_SPI_TransmitReceive_DMA for the entire transaction
  *             to avoid STM32H5 SPI peripheral re-enable issues between
  *             separate Transmit/Receive calls.
  */
@@ -149,11 +149,8 @@ uint8_t w25qxx_interface_spi_qspi_write_read(uint8_t instruction, uint8_t instru
     gs_spi_txrx_done = 0;
     gs_spi_error = 0;
 
-    HAL_StatusTypeDef hal_res = HAL_SPI_TransmitReceive_IT(&hspi1, gs_tx_buf, gs_rx_buf, (uint16_t)total);
-    if (hal_res != HAL_OK)
+    if (HAL_SPI_TransmitReceive_DMA(&hspi1, gs_tx_buf, gs_rx_buf, (uint16_t)total) != HAL_OK)
     {
-        printf("[SPI_IT] TransmitReceive_IT returned %d, state=0x%02X, total=%lu\r\n",
-               (int)hal_res, (unsigned)HAL_SPI_GetState(&hspi1), total);
         W25QXX_CS_HIGH();
         return 1;
     }
@@ -163,10 +160,7 @@ uint8_t w25qxx_interface_spi_qspi_write_read(uint8_t instruction, uint8_t instru
     {
         if ((HAL_GetTick() - start) > SPI_TIMEOUT_MS)
         {
-            printf("[SPI_IT] TIMEOUT total=%lu, state=0x%02X, err=0x%08lX\r\n",
-                   total, (unsigned)HAL_SPI_GetState(&hspi1),
-                   (unsigned long)HAL_SPI_GetError(&hspi1));
-            HAL_SPI_Abort_IT(&hspi1);
+            HAL_SPI_DMAStop(&hspi1);
             W25QXX_CS_HIGH();
             return 1;
         }
@@ -176,8 +170,6 @@ uint8_t w25qxx_interface_spi_qspi_write_read(uint8_t instruction, uint8_t instru
 
     if (gs_spi_error)
     {
-        printf("[SPI_IT] ERROR cb total=%lu, err=0x%08lX\r\n",
-               total, (unsigned long)HAL_SPI_GetError(&hspi1));
         return 1;
     }
 
