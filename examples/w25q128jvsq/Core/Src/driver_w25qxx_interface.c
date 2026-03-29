@@ -22,7 +22,7 @@
  * SOFTWARE.
  *
  * @file      driver_w25qxx_interface.c
- * @brief     driver w25qxx interface source file for STM32H533RE + SPI1 interrupt
+ * @brief     driver w25qxx interface source file for STM32H533RE + SPI1 polling
  * @version   1.0.0
  * @author    Shifeng Li
  * @date      2021-07-15
@@ -43,71 +43,12 @@ extern SPI_HandleTypeDef hspi1;
 #define W25QXX_CS_LOW()   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
 #define W25QXX_CS_HIGH()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
 
-#define SPI_TIMEOUT_MS  1000
+#define SPI_TIMEOUT_MS  5000
 
-static volatile uint8_t gs_spi_tx_done = 0;
-static volatile uint8_t gs_spi_rx_done = 0;
-static volatile uint8_t gs_spi_txrx_done = 0;
-
-void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-    if (hspi->Instance == SPI1)
-    {
-        gs_spi_tx_done = 1;
-    }
-}
-
-void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-    if (hspi->Instance == SPI1)
-    {
-        gs_spi_rx_done = 1;
-    }
-}
-
-void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-    if (hspi->Instance == SPI1)
-    {
-        gs_spi_txrx_done = 1;
-    }
-}
-
-static uint8_t spi_transmit_it(uint8_t *data, uint16_t len)
-{
-    gs_spi_tx_done = 0;
-    if (HAL_SPI_Transmit_IT(&hspi1, data, len) != HAL_OK)
-    {
-        return 1;
-    }
-    uint32_t start = HAL_GetTick();
-    while (!gs_spi_tx_done)
-    {
-        if ((HAL_GetTick() - start) > SPI_TIMEOUT_MS)
-        {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static uint8_t spi_receive_it(uint8_t *data, uint16_t len)
-{
-    gs_spi_rx_done = 0;
-    if (HAL_SPI_Receive_IT(&hspi1, data, len) != HAL_OK)
-    {
-        return 1;
-    }
-    uint32_t start = HAL_GetTick();
-    while (!gs_spi_rx_done)
-    {
-        if ((HAL_GetTick() - start) > SPI_TIMEOUT_MS)
-        {
-            return 1;
-        }
-    }
-    return 0;
-}
+/* 4096 (max sector) + 6 (cmd+addr+dummy) */
+#define SPI_BUF_SIZE  4102
+static uint8_t gs_tx_buf[SPI_BUF_SIZE];
+static uint8_t gs_rx_buf[SPI_BUF_SIZE];
 
 /**
  * @brief  interface spi qspi bus init
@@ -152,7 +93,9 @@ uint8_t w25qxx_interface_spi_qspi_deinit(void)
  * @return     status code
  *             - 0 success
  *             - 1 write read failed
- * @note       none
+ * @note       Uses a single HAL_SPI_TransmitReceive for the entire transaction
+ *             to avoid STM32H5 SPI peripheral re-enable issues between
+ *             separate Transmit/Receive calls.
  */
 uint8_t w25qxx_interface_spi_qspi_write_read(uint8_t instruction, uint8_t instruction_line,
                                              uint32_t address, uint8_t address_line, uint8_t address_len,
@@ -160,96 +103,43 @@ uint8_t w25qxx_interface_spi_qspi_write_read(uint8_t instruction, uint8_t instru
                                              uint8_t dummy, uint8_t *in_buf, uint32_t in_len,
                                              uint8_t *out_buf, uint32_t out_len, uint8_t data_line)
 {
-    uint8_t buf[32];
-    uint16_t pos = 0;
+    uint32_t total = in_len + out_len;
+
+    if (total == 0)
+    {
+        return 0;
+    }
+
+    if (total > SPI_BUF_SIZE)
+    {
+        return 1;
+    }
+
+    /* Build TX buffer: real data for write phase, 0xFF for read phase */
+    if (in_len > 0)
+    {
+        memcpy(gs_tx_buf, in_buf, in_len);
+    }
+    if (out_len > 0)
+    {
+        memset(gs_tx_buf + in_len, 0xFF, out_len);
+    }
 
     W25QXX_CS_LOW();
 
-    /* send instruction */
-    if (instruction_line != 0)
+    if (HAL_SPI_TransmitReceive(&hspi1, gs_tx_buf, gs_rx_buf, (uint16_t)total, SPI_TIMEOUT_MS) != HAL_OK)
     {
-        buf[pos++] = instruction;
-    }
-
-    /* send address */
-    if (address_line != 0)
-    {
-        if (address_len == 4)
-        {
-            buf[pos++] = (uint8_t)((address >> 24) & 0xFF);
-        }
-        if (address_len >= 3)
-        {
-            buf[pos++] = (uint8_t)((address >> 16) & 0xFF);
-        }
-        if (address_len >= 2)
-        {
-            buf[pos++] = (uint8_t)((address >> 8) & 0xFF);
-        }
-        if (address_len >= 1)
-        {
-            buf[pos++] = (uint8_t)(address & 0xFF);
-        }
-    }
-
-    /* send alternate */
-    if (alternate_line != 0)
-    {
-        if (alternate_len == 4)
-        {
-            buf[pos++] = (uint8_t)((alternate >> 24) & 0xFF);
-        }
-        if (alternate_len >= 3)
-        {
-            buf[pos++] = (uint8_t)((alternate >> 16) & 0xFF);
-        }
-        if (alternate_len >= 2)
-        {
-            buf[pos++] = (uint8_t)((alternate >> 8) & 0xFF);
-        }
-        if (alternate_len >= 1)
-        {
-            buf[pos++] = (uint8_t)(alternate & 0xFF);
-        }
-    }
-
-    /* send dummy */
-    for (uint8_t i = 0; i < dummy; i++)
-    {
-        buf[pos++] = 0xFF;
-    }
-
-    /* transmit command header */
-    if (pos > 0)
-    {
-        if (spi_transmit_it(buf, pos) != 0)
-        {
-            W25QXX_CS_HIGH();
-            return 1;
-        }
-    }
-
-    /* write data */
-    if (in_len > 0)
-    {
-        if (spi_transmit_it(in_buf, (uint16_t)in_len) != 0)
-        {
-            W25QXX_CS_HIGH();
-            return 1;
-        }
-    }
-
-    /* read data */
-    if (out_len > 0)
-    {
-        if (spi_receive_it(out_buf, (uint16_t)out_len) != 0)
-        {
-            W25QXX_CS_HIGH();
-            return 1;
-        }
+        W25QXX_CS_HIGH();
+        return 1;
     }
 
     W25QXX_CS_HIGH();
+
+    /* Copy read portion: data clocked in during the out_len phase */
+    if (out_len > 0)
+    {
+        memcpy(out_buf, gs_rx_buf + in_len, out_len);
+    }
 
     return 0;
 }
