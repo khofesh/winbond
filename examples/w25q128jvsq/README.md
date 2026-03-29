@@ -232,3 +232,8 @@ With 8-byte threshold, interrupts fire 8x less frequently, giving the ISR ample 
 | -------- | ---------------------- | ---------------------- | ---------------------- |
 | TX (CH0) | `DMA_MEMORY_TO_PERIPH` | `DMA_SINC_INCREMENTED` | `DMA_DINC_FIXED`       |
 | RX (CH1) | `DMA_PERIPH_TO_MEMORY` | `DMA_SINC_FIXED`       | `DMA_DINC_INCREMENTED` |
+
+## references
+
+- https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/arduino
+- https://www.adafruit.com/product/5634
