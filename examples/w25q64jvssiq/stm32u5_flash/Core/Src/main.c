@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "driver_w25qxx_basic.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,7 +31,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define TEST_ADDR       0x000000U
+#define TEST_LEN        256U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,7 +49,8 @@ DMA_HandleTypeDef handle_GPDMA1_Channel1;
 DMA_HandleTypeDef handle_GPDMA1_Channel0;
 
 /* USER CODE BEGIN PV */
-
+static uint8_t gs_wr_buf[TEST_LEN];
+static uint8_t gs_rd_buf[TEST_LEN];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -59,12 +61,60 @@ static void MX_SPI1_Init(void);
 static void MX_ICACHE_Init(void);
 static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
-
+static uint8_t flash_self_test(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+ * @brief  probe the w25q64 over spi1 dma: id, write, read back
+ * @return 0 on success, 1 on failure
+ */
+static uint8_t flash_self_test(void)
+{
+    uint8_t manufacturer = 0;
+    uint8_t device_id = 0;
+    uint32_t i;
 
+    if (w25qxx_basic_init(W25Q64, W25QXX_INTERFACE_SPI, W25QXX_BOOL_FALSE) != 0)
+    {
+        return 1;
+    }
+
+    if (w25qxx_basic_get_id(&manufacturer, &device_id) != 0)
+    {
+        return 1;
+    }
+
+    /* winbond 0xEF, w25q64jv 0x16 */
+    if ((manufacturer != 0xEF) || (device_id != 0x16))
+    {
+        return 1;
+    }
+
+    for (i = 0; i < TEST_LEN; i++)
+    {
+        gs_wr_buf[i] = (uint8_t)(i ^ 0x5A);
+    }
+
+    if (w25qxx_basic_write(TEST_ADDR, gs_wr_buf, TEST_LEN) != 0)
+    {
+        return 1;
+    }
+
+    memset(gs_rd_buf, 0, TEST_LEN);
+    if (w25qxx_basic_read(TEST_ADDR, gs_rd_buf, TEST_LEN) != 0)
+    {
+        return 1;
+    }
+
+    if (memcmp(gs_wr_buf, gs_rd_buf, TEST_LEN) != 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
 /* USER CODE END 0 */
 
 /**
@@ -101,7 +151,12 @@ int main(void)
   MX_ICACHE_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
+  uint8_t flash_ok = (flash_self_test() == 0) ? 1 : 0;
 
+  if (flash_ok == 0)
+  {
+    HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_RESET);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -111,6 +166,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    if (flash_ok != 0)
+    {
+      HAL_GPIO_TogglePin(USER_LED_GPIO_Port, USER_LED_Pin);
+      HAL_Delay(200);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -381,13 +441,17 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : BOARD_LED_Pin */
-  GPIO_InitStruct.Pin = BOARD_LED_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /*Configure GPIO pin : USER_LED_Pin */
+  GPIO_InitStruct.Pin = USER_LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BOARD_LED_GPIO_Port, &GPIO_InitStruct);
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(USER_LED_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA4 */
   GPIO_InitStruct.Pin = GPIO_PIN_4;
@@ -395,10 +459,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI13_IRQn, 10, 0);
-  HAL_NVIC_EnableIRQ(EXTI13_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
