@@ -22,7 +22,7 @@
  * SOFTWARE.
  *
  * @file      driver_w25qxx_interface.c
- * @brief     driver w25qxx interface source file for STM32H533RE + SPI1 DMA
+ * @brief     driver w25qxx interface source file for STM32U585 + SPI1 DMA
  * @version   1.0.0
  * @author    Shifeng Li
  * @date      2021-07-15
@@ -40,8 +40,8 @@
 
 extern SPI_HandleTypeDef hspi1;
 
-#define W25QXX_CS_LOW()   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
-#define W25QXX_CS_HIGH()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
+#define W25QXX_CS_LOW()   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET)
+#define W25QXX_CS_HIGH()  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET)
 
 #define SPI_TIMEOUT_MS  5000
 
@@ -199,8 +199,19 @@ void w25qxx_interface_delay_ms(uint32_t ms)
  */
 void w25qxx_interface_delay_us(uint32_t us)
 {
-    uint32_t ticks = us * (SystemCoreClock / 1000000);
-    uint32_t start = DWT->CYCCNT;
+    uint32_t ticks;
+    uint32_t start;
+
+    /* DWT cycle counter is disabled out of reset - without this CYCCNT stays 0 and the loop never ends */
+    if ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) == 0U)
+    {
+        DCB->DEMCR |= DCB_DEMCR_TRCENA_Msk;
+        DWT->CYCCNT = 0U;
+        DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    }
+
+    ticks = us * (SystemCoreClock / 1000000U);
+    start = DWT->CYCCNT;
     while ((DWT->CYCCNT - start) < ticks)
     {
     }
