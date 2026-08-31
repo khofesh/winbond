@@ -28,12 +28,29 @@ Hardware wiring (SPI1, software NSS):
 
 Tie /WP and /HOLD to 3.3V.
 
-Current state: CubeMX skeleton only — `main.c` has empty USER CODE blocks and the W25QXX driver is not
-yet wired up. GPDMA1 Channel0 (SPI1 TX) and Channel1 (intended SPI1 RX) are generated, but Channel1 is
-still wrong out of CubeMX: it uses `GPDMA1_REQUEST_SPI1_TX`, `DMA_SINC_FIXED`/`DMA_DINC_FIXED` and links
-to `hdmatx`. RX needs `GPDMA1_REQUEST_SPI1_RX`, `DMA_PERIPH_TO_MEMORY`, `DMA_DINC_INCREMENTED` and
-`__HAL_LINKDMA(hspi, hdmarx, ...)`; TX needs `DMA_SINC_INCREMENTED`. Fix it in CubeMX, not by hand-editing
-generated code.
+Layer stack: `main.c` → `driver_w25qxx_basic.c` / `driver_w25qxx_advance.c` (LibDriver examples, in
+`Core/`) → `driver_w25qxx.c` (vendored core driver) → `driver_w25qxx_interface.c` (board layer: SPI1
+DMA transfer, PA4 CS, delays, debug print).
+
+Current state: working. `main()` runs `flash_self_test()` (JEDEC id `0xEF`/`0x16`, 256-byte write +
+read-back at address 0) and blinks `USER_LED` (PC13) on success, holds it low on failure. Verified on
+hardware.
+
+Board-specific gotchas already fixed — don't reintroduce them when porting from the H5 example:
+
+- CS is **PA4** here, not PB6 (the Nucleo-H533RE pin)
+- `w25qxx_interface_delay_us()` uses `DWT->CYCCNT`, which is disabled out of reset — it enables
+  `DCB->DEMCR TRCENA` + `DWT->CTRL CYCCNTENA` on first call, or the wait loop never terminates
+  (it only appeared to work under a debugger, which enables TRCENA itself)
+- SPI1 kernel clock is 160 MHz; `BaudRatePrescaler = 8` → 20 MHz SCK. Keep SCK ≤ 50 MHz: the driver's
+  SPI read path issues `0x03` Read Data, which the W25Q64JV spec's to 50 MHz (133 MHz applies to
+  `0x0B` Fast Read only)
+- GPDMA1 Ch0 = SPI1 TX (`MEMORY_TO_PERIPH`, `SINC_INCREMENTED`, `hdmatx`), Ch1 = SPI1 RX
+  (`PERIPH_TO_MEMORY`, `DINC_INCREMENTED`, `hdmarx`). CubeMX has generated both as TX before —
+  re-verify `stm32u5xx_hal_msp.c` after every regeneration
+- One `HAL_SPI_TransmitReceive_DMA()` per transaction, not separate Transmit + Receive
+- No UART: `w25qxx_interface_debug_print()` reaches the `_write` stub in `syscalls.c` and is discarded
+- `SPI_BUF_SIZE` (4102) caps a single transfer; `w25qxx_basic_read()` beyond that returns 1
 
 ## STM32CubeMX
 
